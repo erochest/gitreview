@@ -16,6 +16,9 @@ build-type:          Simple
 cabal-version:       >=1.8
 
 executable gitreview
-  -- main-is:             
+  main-is:             GitReview.hs
   -- other-modules:       
   build-depends:       base ==4.5.*
+                     , gitreview-core
+                     , github
+                     , tls-smtp
