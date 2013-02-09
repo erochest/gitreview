@@ -23,3 +23,7 @@ executable gitreview
                      , github
                      , tls-smtp
                      , cmdargs        == 0.10.*
+                     , configurator   == 0.2.*
+                     , hsemail        == 1.7.*
+                     , errors         == 1.4.*
+                     , parsec         == 3.1.*
