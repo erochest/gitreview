@@ -27,3 +27,4 @@ executable gitreview
                      , hsemail        == 1.7.*
                      , errors         == 1.4.*
                      , parsec         == 3.1.*
+                     , bytestring     == 0.9.*
