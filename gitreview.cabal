@@ -28,3 +28,5 @@ executable gitreview
                      , errors         == 1.4.*
                      , parsec         == 3.1.*
                      , bytestring     == 0.9.*
+                     , time           == 1.4.*
+                     , text           == 0.11.*

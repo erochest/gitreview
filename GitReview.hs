@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module Main where
 
@@ -10,6 +11,8 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Configurator as C
 import           Data.Configurator.Types
 import           Data.Data
+import qualified Data.Text as T
+import           Data.Time
 import           Github.Api
 import           Github.Data
 import           Github.Review
@@ -31,10 +34,10 @@ gitReviewCliArgs =  CliConfig { config = def &= help "The configuration file." }
 -- Configuration file.
 
 data GitReviewConfig = GitReviewConfig
-                     { samplePeriod :: Int
-                     , sampleN      :: Int
+                     { samplePeriod   :: Int
+                     , sampleN        :: Int
                      , emailAddresses :: [NameAddr]
-                     , ghAccount :: GithubAccount
+                     , ghAccount      :: GithubAccount
                      } deriving (Show)
 
 getReviewConfig :: Config -> GithubInteraction GitReviewConfig
@@ -60,6 +63,21 @@ getGithubAccount cfg =
                 <$> sequence [ fmap GithubOrgName  <$> C.lookup cfg "github.organization"
                              , fmap GithubUserName <$> C.lookup cfg "github.account"
                              ])
+
+-- Getting the commit
+
+getGithubCommit :: GitReviewConfig -> GithubAuth -> GithubInteraction Commit
+getGithubCommit GitReviewConfig{..} auth = do
+        limit <-  liftIO
+              $   offsetByDays (fromIntegral samplePeriod)
+              <$> getCurrentTime
+        cs    <- mapM (`getCommits` sampleN) =<< getAccountRepos ghAccount
+        fmapLT (UserError . T.unpack)
+            . pickRandom
+            . getAfterOrMinimum getCommitDate limit sampleN
+            . sortByCommitDate
+            $ concat cs
+        where getCommits = getAllRepoCommits' (Just auth)
 
 -- Utilities
 
@@ -88,6 +106,8 @@ main = do
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
                       <$> cmdArgs gitReviewCliArgs)
-        liftIO $ print cfg
+
+        getGithubCommit cfg auth
+
     print result
 
