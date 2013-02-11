@@ -16,6 +16,7 @@ import           Data.Time
 import           Github.Api
 import           Github.Data
 import           Github.Review
+import           Github.Review.Format
 import           System.Console.CmdArgs
 import           System.Environment
 import           Text.Parsec (parse)

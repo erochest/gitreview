@@ -30,3 +30,5 @@ executable gitreview
                      , bytestring     == 0.9.*
                      , time           == 1.4.*
                      , text           == 0.11.*
+                     , blaze-html     == 0.5.*
+                     , mime-mail      == 0.4.*
