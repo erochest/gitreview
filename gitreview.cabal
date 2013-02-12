@@ -32,3 +32,4 @@ executable gitreview
                      , text           == 0.11.*
                      , blaze-html     == 0.5.*
                      , mime-mail      == 0.4.*
+                     , network        == 2.4.*

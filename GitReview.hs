@@ -67,7 +67,7 @@ getGithubAccount cfg =
 
 -- Getting the commit
 
-getGithubCommit :: GitReviewConfig -> GithubAuth -> GithubInteraction Commit
+getGithubCommit :: GitReviewConfig -> GithubAuth -> GithubInteraction RepoCommit
 getGithubCommit GitReviewConfig{..} auth = do
         limit <-  liftIO
               $   offsetByDays (fromIntegral samplePeriod)
@@ -75,7 +75,7 @@ getGithubCommit GitReviewConfig{..} auth = do
         cs    <- mapM (`getCommits` sampleN) =<< getAccountRepos ghAccount
         fmapLT (UserError . T.unpack)
             . pickRandom
-            . getAfterOrMinimum getCommitDate limit sampleN
+            . getAfterOrMinimum (getCommitDate . snd) limit sampleN
             . sortByCommitDate
             $ concat cs
         where getCommits = getAllRepoCommits' (Just auth)
@@ -108,7 +108,10 @@ main = do
                       =<< (:[]) . C.Required . config
                       <$> cmdArgs gitReviewCliArgs)
 
-        getGithubCommit cfg auth
+        rc@(r, c) <- getGithubCommit cfg auth
+        liftIO . putStrLn . T.unpack $ formatCommitText r c
 
-    print result
+        return rc
+
+    return ()
 
