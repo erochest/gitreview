@@ -11,7 +11,9 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Configurator as C
 import           Data.Configurator.Types
 import           Data.Data
+import           Data.Monoid
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import           Data.Time
 import           Github.Api
 import           Github.Data
@@ -19,6 +21,7 @@ import           Github.Review
 import           Github.Review.Format
 import           System.Console.CmdArgs
 import           System.Environment
+import           Text.Blaze.Html.Renderer.Text (renderHtml)
 import           Text.Parsec (parse)
 import           Text.ParserCombinators.Parsec.Rfc2822 (NameAddr(..), address_list)
 
@@ -98,6 +101,7 @@ newMsg msg = fmapLT (const (UserError msg))
 
 main :: IO ()
 main = do
+    putStrLn "gitreview"
     result <- runGithubInteraction $ do
         auth <- newMsg "Missing authentication environment variables \
                        \(GITHUB_USER and GITHUB_PASSWD)."
@@ -110,8 +114,11 @@ main = do
 
         rc@(r, c) <- getGithubCommit cfg auth
         liftIO . putStrLn . T.unpack $ formatCommitText r c
+        liftIO . putStrLn . T.unpack . TL.toStrict . renderHtml $ formatCommitHtml r c
 
         return rc
 
-    return ()
+    case result of
+        Left err -> putStrLn $ "ERROR: " <> show err
+        Right _ -> putStrLn "ok"
 
