@@ -7,6 +7,7 @@ module Main where
 
 import           Control.Applicative
 import           Control.Error
+import           Control.Monad (forM_)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Configurator as C
 import           Data.Configurator.Types
@@ -19,11 +20,17 @@ import           Github.Api
 import           Github.Data
 import           Github.Review
 import           Github.Review.Format
+import           Network (PortID(..))
+import           Network.Mail.SMTP
+import           Network.Mail.SMTP.TLS
+import           Network.Socket (HostName, PortNumber(..))
 import           System.Console.CmdArgs
 import           System.Environment
+import           System.Exit
+import           System.Locale (defaultTimeLocale)
 import           Text.Blaze.Html.Renderer.Text (renderHtml)
 import           Text.Parsec (parse)
-import           Text.ParserCombinators.Parsec.Rfc2822 (NameAddr(..), address_list)
+import           Text.ParserCombinators.Parsec.Rfc2822 (NameAddr(..), address_list, name_addr)
 
 
 -- Command-line parsing.
@@ -38,18 +45,29 @@ gitReviewCliArgs =  CliConfig { config = def &= help "The configuration file." }
 -- Configuration file.
 
 data GitReviewConfig = GitReviewConfig
-                     { samplePeriod   :: Int
-                     , sampleN        :: Int
-                     , emailAddresses :: [NameAddr]
-                     , ghAccount      :: GithubAccount
+                     { samplePeriod   :: !Int
+                     , sampleN        :: !Int
+                     , ghAccount      :: !GithubAccount
+                     , emailAddresses :: ![NameAddr]
+                     , smtpHost       :: !HostName
+                     , smtpPort       :: !Int
+                     , smtpUser       :: !UserName
+                     , smtpPassword   :: !Password
                      } deriving (Show)
 
 getReviewConfig :: Config -> GithubInteraction GitReviewConfig
 getReviewConfig cfg =
-        GitReviewConfig <$> liftIO (C.lookupDefault 1  cfg "sample.period")
-                        <*> liftIO (C.lookupDefault 10 cfg "sample.n")
-                        <*> getEmailAddresses cfg
+        GitReviewConfig <$> lookupIO 1  "sample.period"
+                        <*> lookupIO 10 "sample.n"
                         <*> getGithubAccount cfg
+                        <*> getEmailAddresses cfg
+                        <*> lookupT "Missing config: smtp.host"     "smtp.host"
+                        <*> lookupT "Missing config: smtp.port"     "smtp.port"
+                        <*> lookupT "Missing config: smtp.user"     "smtp.user"
+                        <*> lookupT "Missing config: smtp.password" "smtp.password"
+        where lookupIO def = liftIO . C.lookupDefault def cfg
+              lookupT msg name =    ghIO (C.lookup cfg name)
+                               >>=  noteT (UserError msg) . hoistMaybe
 
 getEmailAddresses :: Config -> GithubInteraction [NameAddr]
 getEmailAddresses cfg = do
@@ -97,11 +115,30 @@ ghIO = ghErrorT . tryIO
 newMsg :: String -> GithubInteraction a -> GithubInteraction a
 newMsg msg = fmapLT (const (UserError msg))
 
+-- Sending mail
+getDateStr :: IO String
+getDateStr = do
+        t <- utcToLocalTime <$> getCurrentTimeZone <*> getCurrentTime
+        return $ formatTime defaultTimeLocale "%c" t
+
+toAddress :: NameAddr -> Address
+toAddress NameAddr{..} =
+        Address (T.pack <$> nameAddr_name) $ T.pack nameAddr_addr
+
+sendCommit :: GitReviewConfig -> Repo -> Commit -> GithubInteraction ()
+sendCommit GitReviewConfig{..} r c = do
+    dateStr <- ghIO (T.pack <$> getDateStr)
+    from    <- hoistEither . ghError . parse name_addr "" $ "<" <> smtpUser <> ">"
+    let from' = toAddress from
+    ghIO . forM_ emailAddresses $ \to ->
+        let to'   = toAddress to
+        in  commentEmail to' from' ("Commit to review for " <> dateStr) r c >>=
+            sendMailTls' smtpHost smtpPort smtpUser smtpPassword 
+
 -- Main
 
 main :: IO ()
 main = do
-    putStrLn "gitreview"
     result <- runGithubInteraction $ do
         auth <- newMsg "Missing authentication environment variables \
                        \(GITHUB_USER and GITHUB_PASSWD)."
@@ -113,12 +150,9 @@ main = do
                       <$> cmdArgs gitReviewCliArgs)
 
         rc@(r, c) <- getGithubCommit cfg auth
-        liftIO . putStrLn . T.unpack $ formatCommitText r c
-        liftIO . putStrLn . T.unpack . TL.toStrict . renderHtml $ formatCommitHtml r c
-
-        return rc
+        sendCommit cfg r c
 
     case result of
-        Left err -> putStrLn $ "ERROR: " <> show err
-        Right _ -> putStrLn "ok"
+        Left err -> putStrLn ("ERROR: " <> show err) >> exitWith (ExitFailure 1)
+        Right _  -> putStrLn "ok"
 

@@ -15,7 +15,7 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.String (IsString)
 import qualified Data.Text as T
-import           Data.Text.Lazy (toStrict)
+import           Data.Text.Lazy (fromStrict, toStrict)
 import           Data.Text.Lazy.Builder
 import           Github.Data
 import           Github.Review
@@ -87,5 +87,8 @@ formatCommitHtml Repo{..} Commit{..} = docTypeHtml $ do
 fullEmail :: (Monoid m, IsString m) => m -> m -> m
 fullEmail name email = name <> " <" <> email <> ">"
 
-commentEmail :: Repo -> Commit -> Mail
-commentEmail = undefined
+commentEmail :: Address -> Address -> T.Text -> Repo -> Commit -> IO Mail
+commentEmail to from subject r c =
+        simpleMail to from subject (fromStrict asText) (renderHtml asHtml) []
+        where (asText, asHtml) = formatCommit r c
+
