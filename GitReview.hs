@@ -21,6 +21,7 @@ import           Github.Data
 import           Github.Review
 import           Github.Review.Format
 import           Network (PortID(..))
+import qualified Network.Mail.Mime as Mime
 import           Network.Mail.SMTP
 import           Network.Mail.SMTP.TLS
 import           Network.Socket (HostName, PortNumber(..))
@@ -116,10 +117,16 @@ newMsg :: String -> GithubInteraction a -> GithubInteraction a
 newMsg msg = fmapLT (const (UserError msg))
 
 -- Sending mail
-getDateStr :: IO String
+getDateStr :: GithubInteraction T.Text
 getDateStr = do
-        t <- utcToLocalTime <$> getCurrentTimeZone <*> getCurrentTime
-        return $ formatTime defaultTimeLocale "%c" t
+        t <- ghIO (utcToLocalTime <$> getCurrentTimeZone <*> getCurrentTime)
+        return . T.pack $ formatTime defaultTimeLocale "%c" t
+
+wrapAndParse :: String -> GithubInteraction Address
+wrapAndParse user = toAddress <$> ( hoistEither
+                                  . ghError
+                                  . parse name_addr ""
+                                  $ "<" <> user <> ">")
 
 toAddress :: NameAddr -> Address
 toAddress NameAddr{..} =
@@ -127,32 +134,52 @@ toAddress NameAddr{..} =
 
 sendCommit :: GitReviewConfig -> Repo -> Commit -> GithubInteraction ()
 sendCommit GitReviewConfig{..} r c = do
-    dateStr <- ghIO (T.pack <$> getDateStr)
-    from    <- hoistEither . ghError . parse name_addr "" $ "<" <> smtpUser <> ">"
-    let from' = toAddress from
+    dateStr <- getDateStr
+    from    <- wrapAndParse smtpUser
     ghIO . forM_ emailAddresses $ \to ->
-        let to'   = toAddress to
-        in  commentEmail to' from' ("Commit to review for " <> dateStr) r c >>=
+        let to' = toAddress to
+        in  commentEmail to' from ("Commit to review for " <> dateStr) r c >>=
             sendMailTls' smtpHost smtpPort smtpUser smtpPassword 
+
+sendError :: GitReviewConfig -> Error -> GithubInteraction ()
+sendError GitReviewConfig{..} err = do
+    dateStr <- getDateStr
+    from    <- wrapAndParse smtpUser
+    ghIO . forM_ emailAddresses $ \to ->
+        let (asText, asHtml) = formatError err
+        in  Mime.simpleMail (toAddress to) from
+                       ("ERROR: Retreiving commits to review for " <> dateStr)
+                       (TL.fromStrict asText)
+                       (renderHtml asHtml)
+                       [] >>=
+            sendMailTls' smtpHost smtpPort smtpUser smtpPassword
+
+sendResults :: GitReviewConfig -> Either Error (Repo, Commit)
+            -> GithubInteraction ()
+sendResults cfg (Right (r, c)) = sendCommit cfg r c
+sendResults cfg (Left err)     = sendError cfg err
 
 -- Main
 
 main :: IO ()
 main = do
-    result <- runGithubInteraction $ do
-        auth <- newMsg "Missing authentication environment variables \
-                       \(GITHUB_USER and GITHUB_PASSWD)."
-                (GithubBasicAuth <$> ghIO (BS.pack <$> getEnv "GITHUB_USER")
-                                 <*> ghIO (BS.pack <$> getEnv "GITHUB_PASSWD"))
+    retCode <- runGithubInteraction $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
                       <$> cmdArgs gitReviewCliArgs)
 
-        rc@(r, c) <- getGithubCommit cfg auth
-        sendCommit cfg r c
+        result <- ghIO . runGithubInteraction $ do
+            auth <- newMsg "Missing authentication environment variables \
+                           \(GITHUB_USER and GITHUB_PASSWD)."
+                    (GithubBasicAuth <$> ghIO (BS.pack <$> getEnv "GITHUB_USER")
+                                     <*> ghIO (BS.pack <$> getEnv "GITHUB_PASSWD"))
 
-    case result of
+            getGithubCommit cfg auth
+
+        sendResults cfg result
+
+    case retCode of
         Left err -> putStrLn ("ERROR: " <> show err) >> exitWith (ExitFailure 1)
         Right _  -> putStrLn "ok"
 

@@ -7,6 +7,7 @@ module Github.Review.Format
     , formatCommitText
     , formatCommitHtml
     , commentEmail
+    , formatError
     ) where
 
 
@@ -91,4 +92,14 @@ commentEmail :: Address -> Address -> T.Text -> Repo -> Commit -> IO Mail
 commentEmail to from subject r c =
         simpleMail to from subject (fromStrict asText) (renderHtml asHtml) []
         where (asText, asHtml) = formatCommit r c
+
+formatError :: Error -> (T.Text, Html)
+formatError err = ( T.pack errStr
+                  , docTypeHtml $ do
+                      H.head $ H.title "ERROR Retreiving Commits to Review"
+                      body $ do
+                          h1 "ERROR"
+                          pre $ code $ toHtml (show err)
+                  )
+        where errStr = show err
 
