@@ -49,6 +49,7 @@ data GitReviewConfig = GitReviewConfig
                      { samplePeriod   :: !Int
                      , sampleN        :: !Int
                      , ghAccount      :: !GithubAccount
+                     , ghPausePeriod  :: !Int
                      , emailAddresses :: ![NameAddr]
                      , smtpHost       :: !HostName
                      , smtpPort       :: !Int
@@ -61,6 +62,7 @@ getReviewConfig cfg =
         GitReviewConfig <$> lookupIO 1  "sample.period"
                         <*> lookupIO 10 "sample.n"
                         <*> getGithubAccount cfg
+                        <*> lookupIO 1  "github.pause"
                         <*> getEmailAddresses cfg
                         <*> lookupT "Missing config: smtp.host"     "smtp.host"
                         <*> lookupT "Missing config: smtp.port"     "smtp.port"
@@ -94,13 +96,14 @@ getGithubCommit GitReviewConfig{..} auth = do
         limit <-  liftIO
               $   offsetByDays (fromIntegral samplePeriod)
               <$> getCurrentTime
-        cs    <- mapM (`getCommits` sampleN) =<< getAccountRepos ghAccount
+        cs    <-  getAccountRepos ghAccount >>=
+                  mapM (`getCommits` sampleN) 
         fmapLT (UserError . T.unpack)
             . pickRandom
             . getAfterOrMinimum (getCommitDate . snd) limit sampleN
             . sortByCommitDate
             $ concat cs
-        where getCommits = getAllRepoCommits' (Just auth)
+        where getCommits = getAllRepoCommits' (Just auth) (Just ghPausePeriod)
 
 -- Utilities
 
