@@ -12,6 +12,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Configurator as C
 import           Data.Configurator.Types
 import           Data.Data
+import           Data.DList (toList)
 import           Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
@@ -98,7 +99,8 @@ getGithubCommit GitReviewConfig{..} auth = do
               <$> getCurrentTime
         cs    <-  getAccountRepos ghAccount >>=
                   mapM (`getCommits` sampleN) 
-        fmapLT (UserError . T.unpack)
+        hoistEitherT
+            . fmapLT (UserError . T.unpack)
             . pickRandom
             . getAfterOrMinimum (getCommitDate . snd) limit sampleN
             . sortByCommitDate
@@ -111,7 +113,7 @@ ghError :: Show a => Either a b -> Either Error b
 ghError = fmapL (UserError . show)
 
 ghErrorT :: Show a => EitherT a IO b -> GithubInteraction b
-ghErrorT = fmapLT (UserError . show)
+ghErrorT = hoistEitherT . fmapLT (UserError . show)
 
 ghIO :: IO a -> GithubInteraction a
 ghIO = ghErrorT . tryIO
@@ -144,12 +146,12 @@ sendCommit GitReviewConfig{..} r c = do
         in  commentEmail to' from ("Commit to review for " <> dateStr) r c >>=
             sendMailTls' smtpHost smtpPort smtpUser smtpPassword 
 
-sendError :: GitReviewConfig -> Error -> GithubInteraction ()
-sendError GitReviewConfig{..} err = do
+sendError :: GitReviewConfig -> Error -> TaskName -> GithubInteraction ()
+sendError GitReviewConfig{..} err task = do
     dateStr <- getDateStr
     from    <- wrapAndParse smtpUser
     ghIO . forM_ emailAddresses $ \to ->
-        let (asText, asHtml) = formatError err
+        let (asText, asHtml) = formatError err task
         in  Mime.simpleMail (toAddress to) from
                        ("ERROR: Retreiving commits to review for " <> dateStr)
                        (TL.fromStrict asText)
@@ -157,22 +159,24 @@ sendError GitReviewConfig{..} err = do
                        [] >>=
             sendMailTls' smtpHost smtpPort smtpUser smtpPassword
 
-sendResults :: GitReviewConfig -> Either Error (Repo, Commit)
+sendResults :: GitReviewConfig
+            -> Either Error (Repo, Commit)
+            -> TaskList
             -> GithubInteraction ()
-sendResults cfg (Right (r, c)) = sendCommit cfg r c
-sendResults cfg (Left err)     = sendError cfg err
+sendResults cfg (Right (r, c)) _     = sendCommit cfg r c
+sendResults cfg (Left err)     tasks = sendError cfg err . last $ toList tasks
 
 -- Main
 
 main :: IO ()
 main = do
-    retCode <- runGithubInteraction $ do
+    (retCode, _) <- runGithubInteraction $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
                       <$> cmdArgs gitReviewCliArgs)
 
-        result <- ghIO . runGithubInteraction $ do
+        (result, log) <- ghIO . runGithubInteraction $ do
             auth <- newMsg "Missing authentication environment variables \
                            \(GITHUB_USER and GITHUB_PASSWD)."
                     (GithubBasicAuth <$> ghIO (BS.pack <$> getEnv "GITHUB_USER")
@@ -180,7 +184,7 @@ main = do
 
             getGithubCommit cfg auth
 
-        sendResults cfg result
+        sendResults cfg result log
 
     case retCode of
         Left err -> putStrLn ("ERROR: " <> show err) >> exitWith (ExitFailure 1)

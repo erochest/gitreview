@@ -35,3 +35,4 @@ executable gitreview
                      , network        == 2.4.*
                      , old-locale     == 1.0.*
                      , smtp-mail      == 0.1.*
+                     , dlist          == 0.5

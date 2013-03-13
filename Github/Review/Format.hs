@@ -93,13 +93,17 @@ commentEmail to from subject r c =
         simpleMail to from subject (fromStrict asText) (renderHtml asHtml) []
         where (asText, asHtml) = formatCommit r c
 
-formatError :: Error -> (T.Text, Html)
-formatError err = ( T.pack errStr
-                  , docTypeHtml $ do
-                      H.head $ H.title "ERROR Retreiving Commits to Review"
-                      body $ do
-                          h1 "ERROR"
-                          pre $ code $ toHtml (show err)
-                  )
+formatError :: Error -> TaskName -> (T.Text, Html)
+formatError err task =
+        ( "ERROR: At task " <> task <> "\n" <> T.pack errStr
+        , docTypeHtml $ do
+            H.head $ H.title "ERROR Retreiving Commits to Review"
+            body $ do
+                h1 "ERROR"
+                p $ do
+                    toHtml ("At task " :: T.Text)
+                    em $ toHtml task
+                pre $ code $ toHtml (show err)
+        )
         where errStr = show err
 
