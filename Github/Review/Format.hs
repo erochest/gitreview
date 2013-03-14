@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE EmptyDataDecls    #-}
 
 
 module Github.Review.Format
@@ -12,12 +13,14 @@ module Github.Review.Format
 
 
 import           Control.Applicative
+import           Control.Monad
 import           Data.Maybe
 import           Data.Monoid
 import           Data.String (IsString)
 import qualified Data.Text as T
 import           Data.Text.Lazy (fromStrict, toStrict)
 import           Data.Text.Lazy.Builder
+import           Data.Text.Lazy.Builder.Int
 import           Github.Data
 import           Github.Review
 import           Network.Mail.Mime
@@ -93,9 +96,11 @@ commentEmail to from subject r c =
         simpleMail to from subject (fromStrict asText) (renderHtml asHtml) []
         where (asText, asHtml) = formatCommit r c
 
-formatError :: Error -> TaskName -> (T.Text, Html)
-formatError err task =
-        ( "ERROR: At task " <> task <> "\n" <> T.pack errStr
+formatError :: Error -> [TaskName] -> (T.Text, Html)
+formatError err tasks =
+        ( render $  "ERROR: At task " <> fromText task <> "\n"
+                 <> fromString errStr <> "\n\n"
+                 <> taskListText tasks
         , docTypeHtml $ do
             H.head $ H.title "ERROR Retreiving Commits to Review"
             body $ do
@@ -104,6 +109,17 @@ formatError err task =
                     toHtml ("At task " :: T.Text)
                     em $ toHtml task
                 pre $ code $ toHtml (show err)
+                taskListHtml tasks
         )
         where errStr = show err
+              task   = last tasks
+              render = toStrict . toLazyText
+
+taskListText :: [TaskName] -> Builder
+taskListText = foldr f empty . zip [1..] . map fromText
+    where f (i, task) buffer = decimal i <> (". " <> (task <> ("\n" <> buffer)))
+          empty = fromText ""
+
+taskListHtml :: [TaskName] -> Html
+taskListHtml tasks = ol $ forM_ tasks $ li . toHtml
 

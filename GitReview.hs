@@ -146,12 +146,12 @@ sendCommit GitReviewConfig{..} r c = do
         in  commentEmail to' from ("Commit to review for " <> dateStr) r c >>=
             sendMailTls' smtpHost smtpPort smtpUser smtpPassword 
 
-sendError :: GitReviewConfig -> Error -> TaskName -> GithubInteraction ()
-sendError GitReviewConfig{..} err task = do
+sendError :: GitReviewConfig -> Error -> [TaskName] -> GithubInteraction ()
+sendError GitReviewConfig{..} err tasks = do
     dateStr <- getDateStr
     from    <- wrapAndParse smtpUser
     ghIO . forM_ emailAddresses $ \to ->
-        let (asText, asHtml) = formatError err task
+        let (asText, asHtml) = formatError err tasks
         in  Mime.simpleMail (toAddress to) from
                        ("ERROR: Retreiving commits to review for " <> dateStr)
                        (TL.fromStrict asText)
@@ -161,10 +161,10 @@ sendError GitReviewConfig{..} err task = do
 
 sendResults :: GitReviewConfig
             -> Either Error (Repo, Commit)
-            -> TaskList
+            -> [TaskName]
             -> GithubInteraction ()
 sendResults cfg (Right (r, c)) _     = sendCommit cfg r c
-sendResults cfg (Left err)     tasks = sendError cfg err . last $ toList tasks
+sendResults cfg (Left err)     tasks = sendError cfg err tasks
 
 -- Main
 
@@ -184,7 +184,7 @@ main = do
 
             getGithubCommit cfg auth
 
-        sendResults cfg result log
+        sendResults cfg result $ toList log
 
     case retCode of
         Left err -> putStrLn ("ERROR: " <> show err) >> exitWith (ExitFailure 1)
