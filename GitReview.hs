@@ -167,7 +167,7 @@ sendResults cfg (Left err)     tasks = sendError cfg err tasks
 
 main :: IO ()
 main = do
-    (retCode, _) <- runGithubInteraction 1 False 50 $ do
+    (retCode, _) <- runGithubInteraction 1 True 1000 $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
@@ -177,7 +177,7 @@ main = do
                                     <*> scriptIO (BS.pack <$> getEnv "GITHUB_PASSWD")
 
 
-        (result, log) <- ghIO . runGithubInteraction 3 False 50 $
+        (result, log) <- ghIO . runGithubInteraction 3 True 1000 $
             getGithubCommit cfg auth
 
         sendResults cfg result $ toList log
