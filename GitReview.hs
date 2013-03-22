@@ -70,13 +70,13 @@ getReviewConfig cfg =
                         <*> lookupT "Missing config: smtp.user"     "smtp.user"
                         <*> lookupT "Missing config: smtp.password" "smtp.password"
         where lookupIO def = liftIO . C.lookupDefault def cfg
-              lookupT msg name =    ghIO (C.lookup cfg name)
-                               >>=  noteT (UserError msg) . hoistMaybe
+              lookupT msg name =   ghIO (C.lookup cfg name)
+                               >>= hoistEitherT . noteT (UserError msg) . hoistMaybe
 
 getEmailAddresses :: Config -> GithubInteraction [NameAddr]
 getEmailAddresses cfg = do
         addrStr <- hoistGH (noteError <$> lookupEmail)
-        hoistEither $ parseAddr addrStr
+        insertEither $ parseAddr addrStr
         where noteError   = note (UserError "No target.email in config.")
               lookupEmail = C.lookup cfg "target.email"
               parseAddr   = ghError . parse address_list ""
@@ -98,7 +98,7 @@ getGithubCommit GitReviewConfig{..} auth = do
               $   offsetByDays (fromIntegral samplePeriod)
               <$> getCurrentTime
         cs    <-  getAccountRepos ghAccount >>=
-                  mapM (`getCommits` sampleN) 
+                  mapM (`getCommits` sampleN)
         hoistEitherT
             . fmapLT (UserError . T.unpack)
             . pickRandom
@@ -118,9 +118,6 @@ ghErrorT = hoistEitherT . fmapLT (UserError . show)
 ghIO :: IO a -> GithubInteraction a
 ghIO = ghErrorT . tryIO
 
-newMsg :: String -> GithubInteraction a -> GithubInteraction a
-newMsg msg = fmapLT (const (UserError msg))
-
 -- Sending mail
 getDateStr :: GithubInteraction T.Text
 getDateStr = do
@@ -128,7 +125,7 @@ getDateStr = do
         return . T.pack $ formatTime defaultTimeLocale "%c" t
 
 wrapAndParse :: String -> GithubInteraction Address
-wrapAndParse user = toAddress <$> ( hoistEither
+wrapAndParse user = toAddress <$> ( insertEither
                                   . ghError
                                   . parse name_addr ""
                                   $ "<" <> user <> ">")
@@ -144,7 +141,7 @@ sendCommit GitReviewConfig{..} r c = do
     ghIO . forM_ emailAddresses $ \to ->
         let to' = toAddress to
         in  commentEmail to' from ("Commit to review for " <> dateStr) r c >>=
-            sendMailTls' smtpHost smtpPort smtpUser smtpPassword 
+            sendMailTls' smtpHost smtpPort smtpUser smtpPassword
 
 sendError :: GitReviewConfig -> Error -> [TaskName] -> GithubInteraction ()
 sendError GitReviewConfig{..} err tasks = do
@@ -170,18 +167,17 @@ sendResults cfg (Left err)     tasks = sendError cfg err tasks
 
 main :: IO ()
 main = do
-    (retCode, _) <- runGithubInteraction $ do
+    (retCode, _) <- runGithubInteraction 1 False 50 $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
                       <$> cmdArgs gitReviewCliArgs)
+        auth <- hoistGH . fmap (fmapL UserError) . runEitherT $
+                    GithubBasicAuth <$> scriptIO (BS.pack <$> getEnv "GITHUB_USER")
+                                    <*> scriptIO (BS.pack <$> getEnv "GITHUB_PASSWD")
 
-        (result, log) <- ghIO . runGithubInteraction $ do
-            auth <- newMsg "Missing authentication environment variables \
-                           \(GITHUB_USER and GITHUB_PASSWD)."
-                    (GithubBasicAuth <$> ghIO (BS.pack <$> getEnv "GITHUB_USER")
-                                     <*> ghIO (BS.pack <$> getEnv "GITHUB_PASSWD"))
 
+        (result, log) <- ghIO . runGithubInteraction 3 False 50 $
             getGithubCommit cfg auth
 
         sendResults cfg result $ toList log
