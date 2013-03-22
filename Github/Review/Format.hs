@@ -14,6 +14,7 @@ module Github.Review.Format
 
 import           Control.Applicative
 import           Control.Monad
+import qualified Data.List as L
 import           Data.Maybe
 import           Data.Monoid
 import           Data.String (IsString)
@@ -117,7 +118,7 @@ formatError :: Error -> [TaskName] -> (T.Text, Html)
 formatError err tasks =
         ( render $  "ERROR: At task " <> fromText task <> "\n"
                  <> fromString errStr <> "\n\n"
-                 <> taskListText tasks
+                 <> taskListText taskCounts
                  <> versionText
         , docTypeHtml $ do
             H.head $ H.title "ERROR Retreiving Commits to Review"
@@ -127,19 +128,30 @@ formatError err tasks =
                     toHtml ("At task " :: T.Text)
                     em $ toHtml task
                 pre $ code $ toHtml (show err)
-                taskListHtml tasks
+                taskListHtml taskCounts
                 hr
                 versionHtml
         )
-        where errStr = show err
-              task   = last tasks
-              render = toStrict . toLazyText
+        where errStr     = show err
+              task       = last tasks
+              render     = toStrict . toLazyText
+              taskCounts = map (uncurry formatCount) $ groupTasks tasks
 
-taskListText :: [TaskName] -> Builder
+taskListText :: [T.Text] -> Builder
 taskListText = foldr f empty . zip [1..] . map fromText
     where f (i, task) buffer = decimal i <> (". " <> (task <> ("\n" <> buffer)))
           empty = fromText ""
 
-taskListHtml :: [TaskName] -> Html
+taskListHtml :: [T.Text] -> Html
 taskListHtml tasks = ol $ forM_ tasks $ li . toHtml
+
+groupTasks :: [TaskName] -> [(TaskName, Int)]
+groupTasks = map countGroup . L.group
+    where countGroup xs@(x:_) = (x, length xs)
+          countGroup []       = (mempty, 0)
+
+formatCount :: TaskName -> Int -> T.Text
+formatCount name 0     = mempty
+formatCount name 1     = name
+formatCount name count = name <> " (" <> T.pack (show count) <> ")"
 
