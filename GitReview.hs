@@ -52,26 +52,42 @@ data GitReviewConfig = GitReviewConfig
                      , ghAccount      :: !GithubAccount
                      , ghPausePeriod  :: !Int
                      , emailAddresses :: ![NameAddr]
+                     , retrySettings  :: !GitReviewRetry
                      , smtpHost       :: !HostName
                      , smtpPort       :: !Int
                      , smtpUser       :: !UserName
                      , smtpPassword   :: !Password
                      } deriving (Show)
 
+data GitReviewRetry = GitReviewRetry
+                    { numRetries :: !Int
+                    , backoff    :: !Bool
+                    , baseDelay  :: !Int
+                    } deriving (Show)
+
 getReviewConfig :: Config -> GithubInteraction GitReviewConfig
 getReviewConfig cfg =
-        GitReviewConfig <$> lookupIO 1  "sample.period"
-                        <*> lookupIO 10 "sample.n"
+        GitReviewConfig <$> lookupIO cfg 1  "sample.period"
+                        <*> lookupIO cfg 10 "sample.n"
                         <*> getGithubAccount cfg
-                        <*> lookupIO 1  "github.pause"
+                        <*> lookupIO cfg 1  "github.pause"
                         <*> getEmailAddresses cfg
+                        <*> getRetrySettings cfg
                         <*> lookupT "Missing config: smtp.host"     "smtp.host"
                         <*> lookupT "Missing config: smtp.port"     "smtp.port"
                         <*> lookupT "Missing config: smtp.user"     "smtp.user"
                         <*> lookupT "Missing config: smtp.password" "smtp.password"
-        where lookupIO def = liftIO . C.lookupDefault def cfg
-              lookupT msg name =   ghIO (C.lookup cfg name)
+        where lookupT msg name =   ghIO (C.lookup cfg name)
                                >>= hoistEitherT . noteT (UserError msg) . hoistMaybe
+
+lookupIO :: Configured a => Config -> a -> Name -> GithubInteraction a
+lookupIO cfg def = liftIO . C.lookupDefault def cfg
+
+getRetrySettings :: Config -> GithubInteraction GitReviewRetry
+getRetrySettings cfg =
+        GitReviewRetry <$> lookupIO cfg 5    "retry.numRetries"
+                       <*> lookupIO cfg True "retry.backoff"
+                       <*> lookupIO cfg 50   "retry.baseDelay"
 
 getEmailAddresses :: Config -> GithubInteraction [NameAddr]
 getEmailAddresses cfg = do
@@ -167,7 +183,7 @@ sendResults cfg (Left err)     tasks = sendError cfg err tasks
 
 main :: IO ()
 main = do
-    (retCode, _) <- runGithubInteraction 1 True 1000 $ do
+    (retCode, _) <- runGithubInteraction def def def $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
@@ -175,9 +191,9 @@ main = do
         auth <- hoistGH . fmap (fmapL UserError) . runEitherT $
                     GithubBasicAuth <$> scriptIO (BS.pack <$> getEnv "GITHUB_USER")
                                     <*> scriptIO (BS.pack <$> getEnv "GITHUB_PASSWD")
+        let GitReviewRetry{..} = retrySettings cfg
 
-
-        (result, log) <- ghIO . runGithubInteraction 3 True 1000 $
+        (result, log) <- ghIO . runGithubInteraction numRetries backoff baseDelay $
             getGithubCommit cfg auth
 
         sendResults cfg result $ toList log
