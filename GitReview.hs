@@ -60,9 +60,10 @@ data GitReviewConfig = GitReviewConfig
                      } deriving (Show)
 
 data GitReviewRetry = GitReviewRetry
-                    { numRetries :: !Int
-                    , backoff    :: !Bool
-                    , baseDelay  :: !Int
+                    { numRetries  :: !Int
+                    , backoff     :: !Bool
+                    , baseDelay   :: !Int
+                    , accumErrors :: !Int
                     } deriving (Show)
 
 getReviewConfig :: Config -> GithubInteraction GitReviewConfig
@@ -88,6 +89,7 @@ getRetrySettings cfg =
         GitReviewRetry <$> lookupIO cfg 5    "retry.numRetries"
                        <*> lookupIO cfg True "retry.backoff"
                        <*> lookupIO cfg 50   "retry.baseDelay"
+                       <*> lookupIO cfg 1    "retry.accumErrors"
 
 getEmailAddresses :: Config -> GithubInteraction [NameAddr]
 getEmailAddresses cfg = do
@@ -183,7 +185,7 @@ sendResults cfg (Left err)     tasks = sendError cfg err tasks
 
 main :: IO ()
 main = do
-    (retCode, _) <- runGithubInteraction def def def $ do
+    (retCode, _) <- runGithubInteraction 1 def def def $ do
         cfg  <-  getReviewConfig
              =<< ghIO (   C.load
                       =<< (:[]) . C.Required . config
@@ -193,10 +195,10 @@ main = do
                                     <*> scriptIO (BS.pack <$> getEnv "GITHUB_PASSWD")
         let GitReviewRetry{..} = retrySettings cfg
 
-        (result, log) <- ghIO . runGithubInteraction numRetries backoff baseDelay $
+        (result, log) <- ghIO . runGithubInteraction accumErrors numRetries backoff baseDelay $
             getGithubCommit cfg auth
 
-        sendResults cfg result $ toList log
+        sendResults cfg result log
 
     case retCode of
         Left err -> putStrLn ("ERROR: " <> show err) >> exitWith (ExitFailure 1)
