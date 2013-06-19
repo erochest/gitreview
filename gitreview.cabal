@@ -18,7 +18,7 @@ cabal-version:       >=1.8
 executable gitreview
   main-is:             GitReview.hs
   -- other-modules:       
-  build-depends:       base           == 4.5.*
+  build-depends:       base           == 4.6.*
                      , gitreview-core
                      , github
                      , tls-smtp
@@ -27,7 +27,7 @@ executable gitreview
                      , hsemail        == 1.7.*
                      , errors         == 1.4.*
                      , parsec         == 3.1.*
-                     , bytestring     == 0.9.*
+                     , bytestring     == 0.10.*
                      , time           == 1.4.*
                      , text           == 0.11.*
                      , blaze-html     == 0.5.*
